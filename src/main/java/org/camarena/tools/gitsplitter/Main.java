@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +24,8 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -30,6 +33,7 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collector;
 import java.util.stream.Stream;
 
@@ -39,6 +43,7 @@ import static java.util.stream.Collectors.toSet;
 /**
  * @author Hermán de J. Camarena R.
  */
+@SuppressWarnings({"HardcodedFileSeparator", "ProhibitedExceptionThrown"})
 public class Main {
 	public static void main(@Nonnull final String... args) throws GSException {
 		new Main().run(args);
@@ -54,26 +59,37 @@ public class Main {
 	}
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-	@Parameter(names = "--source", description = "Url to the original git repository", required = true)
-	private String mOriginalRepo;
-	@Parameter(names = "--git", description = "Path to the git command", required = false)
-	private String mGitCommand = "/usr/local/bin/git";
-	@Parameter(names = "--rsync", description = "Path to the rsync command", required = false)
-	private String mRsyncCommand = "/usr/bin/rsync";
-	@Parameter(names = "--tempRepo", description = "Path to the temporary repo.  Must not exist", required = false)
-	private String mTemporaryRepo = null;
-	@Parameter(names = "--finalRepo", description = "Path to the final repo.  Must not exist", required = true)
-	private String mFinalRepo = null;
-	@Parameter(names = "--topFolder", required = true, description = "Folder that will become new top of the tree")
-	private String mNewTopDirectory;
-	@Parameter(names = "--branch", required = true, description = "Branch to process")
-	private String mBranchToCopy;
-	private Path mTempRepoPath;
-	private Path mFinalRepoPath;
+	private static final Pattern SPACES_PATTERN = Pattern.compile("\\p{Space}+");
 	private final String mLineSeparator = System.getProperty("line.separator");
-	private final Map<String, String> mMapFromTempToFinalCommit = new HashMap<>();
+	private final Map<String, String> mMapFromTempToFinalCommit = new HashMap<>(32);
 	private final BiMap<String, String> mFinalHeadToCommit = HashBiMap.create();
 	private final BiMap<String, String> mFinalCommitToHead = mFinalHeadToCommit.inverse();
+
+	@Parameter(names = "--source", description = "Url to the original git repository", required = true)
+	private String mOriginalRepo = null;
+
+	@Parameter(names = "--git", description = "Path to the git command", required = false)
+	private String mGitCommand = "/usr/local/bin/git";
+
+	@Parameter(names = "--rsync", description = "Path to the rsync command", required = false)
+	private String mRsyncCommand = "/usr/bin/rsync";
+
+	@Parameter(names = "--tempRepo", description = "Path to the temporary repo.  If specified must not exist",
+			          required = false)
+	private String mTemporaryRepo = null;
+
+	@Parameter(names = "--finalRepo", description = "Path to the final repo.  Must not exist", required = true)
+	private String mFinalRepo = null;
+
+	@Parameter(names = "--topFolder", required = true, description = "Folder that will become new top of the new repo")
+	private String mNewTopDirectory = null;
+
+	@Parameter(names = "--branches", required = true, description = "Comma separated branches to include in new repo",
+			          variableArity = true)
+	private List<String> mBranchesToCopy = null;
+
+	private Path mTempRepoPath = null;
+	private Path mFinalRepoPath = null;
 	private String mFinalCurrentHead = null;
 	private String mTempLastCommitProcessed = null;
 	private String mFinalInitialCommit = null;
@@ -81,26 +97,23 @@ public class Main {
 	@SuppressWarnings("ResultOfMethodCallIgnored")
 	private void cloneToTempRepo() throws GSException {
 		final String dest = mTempRepoPath.normalize().toString();
-		getLogger().info("Cloning original repo into temporary one at \"" + dest + '\'');
+		getLogger().info("Cloning original repo into temporary one at \"{}\"", dest);
 		runOsCommand(mGitCommand, "clone", mOriginalRepo, dest);
-		getLogger().info("Checking out \"" + mBranchToCopy + "\" in Temp repo");
-		runOsCommand(mTempRepoPath.toFile(), mGitCommand, "checkout", "-b", mBranchToCopy, "origin/" + mBranchToCopy);
-		mFinalCurrentHead = mBranchToCopy;
 	}
 
 	@SuppressWarnings("ResultOfMethodCallIgnored")
 	private void copyCommit(@Nonnull final String commit) {
 		try {
-			getLogger().info("Checking out commit \"" + commit + "\" in Temp repo");
 			final File tempWorkingDirectory = mTempRepoPath.toFile();
 			runOsCommand(tempWorkingDirectory, mGitCommand, "checkout", commit);
 			final CommitInfo commitInfo = getCommitInfo(commit);
+			getLogger().info("Processing commit \"{}\":\"{}\"", commit, commitInfo.getComment());
 			final File finalWorkingDirectory = mFinalRepoPath.toFile();
 			if (commitInfo.isMerge()) {
 				doMerge(commit, commitInfo);
 			} else {
 				if (commitInfo.isRoot()) {
-					prepareFinalBranch(finalWorkingDirectory);
+					prepareFinalBranch(finalWorkingDirectory, mFinalInitialCommit);
 				} else if (!mTempLastCommitProcessed.equals(commitInfo.getParents().get(0))) {
 					prepareFinalBranch(finalWorkingDirectory,
 					                   mMapFromTempToFinalCommit.get(commitInfo.getParents().get(0)));
@@ -110,51 +123,47 @@ public class Main {
 						// may end up pointing to the same final commit if you created the childs in the same second.
 						// It is not very common but I got bitten by it and took me long time to debug it.
 						Thread.sleep(1_000);
-					} catch (InterruptedException e) {
+					} catch (final InterruptedException e) {
 						throw Throwables.propagate(e);
 					}
 				}
 				copyFilesAndCommit(commit, commitInfo, s -> true);
 			}
 			final String currentFinalCommit = getCurrentFinalCommit();
-			getLogger().info("Adding mapping from \"" +
-			                 mFinalCurrentHead +
-			                 "\" to commit \"" +
-			                 currentFinalCommit +
-			                 '"');
+			getLogger().debug("Adding mapping from \"{}\" to commit \"{}\"", mFinalCurrentHead, currentFinalCommit);
 			mFinalHeadToCommit.put(mFinalCurrentHead, currentFinalCommit);
 			mTempLastCommitProcessed = commit;
 			mMapFromTempToFinalCommit.put(commit, currentFinalCommit);
 			if (mFinalInitialCommit == null) {
 				mFinalInitialCommit = currentFinalCommit;
 			}
-		} catch (GSException e) {
-			getLogger().error("Failed copying commit \"" + commit + '"');
+		} catch (final GSException e) {
+			getLogger().error("Failed processing commit \"{}\"", commit);
 			throw Throwables.propagate(e);
 		}
 	}
 
 	@SuppressWarnings("ResultOfMethodCallIgnored")
-	private void copyFilesAndCommit(final @Nonnull String commit,
+	private void copyFilesAndCommit(@Nonnull final String commit,
 	                                @Nonnull final CommitInfo commitInfo,
 	                                @Nonnull final Predicate<String> selectModFiles) throws GSException {
 		String source = mTempRepoPath.toString();
-		if (!source.endsWith("/")) {
+		if (!(source.length() > 0 && source.charAt(source.length() - 1) == '/')) {
 			source += '/';
 		}
 		String destination = mFinalRepoPath.toString();
-		if (!destination.endsWith("/")) {
+		if (!(destination.length() > 0 && destination.charAt(destination.length() - 1) == '/')) {
 			destination += '/';
 		}
-		getLogger().info("Copying from \"" + source + "\" to \"" + destination + '"');
+		getLogger().debug("Copying from \"{}\" to \"{}\"", source, destination);
 		runOsCommand(mRsyncCommand, "-av", "--delete", "--exclude=.git", source, destination);
 		final String status = runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "status", "--short");
 		if (StringUtils.isEmpty(status)) {
-			getLogger().info("Commit \"" + commit + "\" has no changes.  Skipping it");
+			getLogger().info("Commit \"{}\" has no changes.  Skipping it", commit);
 		} else {
 			linesInString(status).map(String::trim).filter(selectModFiles).map(getSecondWord()).forEach(s -> {
 				try {
-					getLogger().info("Adding \"" + s + '"');
+					getLogger().debug("Adding \"{}\"", s);
 					runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "add", s);
 				} catch (GSException e) {
 					throw Throwables.propagate(e);
@@ -167,7 +176,7 @@ public class Main {
 			                                         "--date=" + commitInfo.getDate(),
 			                                         "-m",
 			                                         commitInfo.getComment());
-			getLogger().info("Commit result: \"" + commitResult + '"');
+			getLogger().debug("Commit result: \"{}\"", commitResult);
 		}
 	}
 
@@ -175,18 +184,63 @@ public class Main {
 	private void createFinalRepo() throws GSException {
 		final File workingDirectory = mFinalRepoPath.toFile();
 		runOsCommand(workingDirectory, mGitCommand, "init");
-		runOsCommand(workingDirectory, mGitCommand, "checkout", "-b", mBranchToCopy);
+		mBranchesToCopy.forEach(b -> {
+			getLogger().debug("Creating initial branch \"{}\"", b);
+			try {
+				runOsCommand(workingDirectory, mGitCommand, "checkout", "-b", b);
+			} catch (GSException e) {
+				throw Throwables.propagate(e);
+			}
+		});
+	}
+
+	private void defineFinalBranches() throws GSException {
+		mBranchesToCopy.forEach(b -> {
+			try {
+				final String originalCommit = getFirstWord().apply(runOsCommand(mTempRepoPath.toFile(),
+				                                                                mGitCommand,
+				                                                                "log",
+				                                                                "--abbrev-commit",
+				                                                                "--pretty=oneline",
+				                                                                "-1",
+				                                                                b));
+				final String newCommit = mMapFromTempToFinalCommit.get(originalCommit);
+				if (StringUtils.isEmpty(newCommit)) {
+					throw new GSException("Can't find new commit");
+				}
+				getLogger().debug("Setting final branch \"{}\" to commit \"{}\"", b, newCommit);
+				final String existingHead = mFinalCommitToHead.get(newCommit);
+				runOsCommand(mFinalRepoPath.toFile(),
+				             mGitCommand,
+				             "checkout",
+				             "-b",
+				             b,
+				             existingHead == null ? newCommit : existingHead);
+			} catch (GSException e) {
+				throw Throwables.propagate(e);
+			}
+		});
+		mFinalHeadToCommit.keySet().forEach(b -> {
+			getLogger().debug("Removing temporary branch \"{}\".", b);
+			try {
+				runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "branch", "-D", b);
+			} catch (GSException e) {
+				throw Throwables.propagate(e);
+			}
+		});
+		getLogger().debug("Running GC...");
+		runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "gc", "--aggressive", "--prune=all");
 	}
 
 	private void displayHelp(@Nonnull final JCommander commander) {
 		Objects.requireNonNull(commander);
 		final StringBuilder out = new StringBuilder(256);
 		commander.usage(out);
-		getLogger().error(out.toString());
+		getLogger().info(out.toString());
 	}
 
 	@SuppressWarnings("ResultOfMethodCallIgnored")
-	private void doMerge(final @Nonnull String commit, final CommitInfo commitInfo) throws GSException {
+	private void doMerge(@Nonnull final String commit, final CommitInfo commitInfo) throws GSException {
 		final ImmutableList<String> headsToMerge = commitInfo.getParents()
 				                                           .stream()
 				                                           .map(mMapFromTempToFinalCommit::get)
@@ -199,32 +253,31 @@ public class Main {
 		final String survivorHead = survivorHeadOption.get();
 		final ImmutableList<String> otherHeads =
 				headsToMerge.stream().filter(s -> !survivorHead.equals(s)).collect(immutableListCollector());
-		getLogger().info("Checkout \"" + survivorHead + "\" in final repo");
+		getLogger().debug("Checkout \"{}\" in final repo", survivorHead);
 		runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "checkout", survivorHead);
 		final ImmutableList<String> args =
 				Stream.concat(Stream.of(mGitCommand, "merge", "-m", commitInfo.getComment()), otherHeads.stream())
 						.collect(immutableListCollector());
 		try {
-			getLogger().info("Issuing the merge command to \"" +
-			                 survivorHead +
-			                 "\" from " +
+			getLogger().debug("Issuing the merge command to \"{}\" from {}",
+			                 survivorHead,
 			                 otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
 			runOsCommand(mFinalRepoPath.toFile(), args.toArray(new String[args.size()]));
-		} catch (GSException e) {
+		} catch (final GSException e) {
 			if (e.getMessage().contains("Merge conflict")) {
-				getLogger().info("Found merge conflict.  Issuing a copy and commit");
+				getLogger().debug("Found merge conflict.  Issuing a copy and commit");
 				copyFilesAndCommit(commit, commitInfo, s -> s.trim().startsWith("UU"));
 			} else {
 				throw e;
 			}
 		}
-		getLogger().info("Removing branches and references to " +
+		getLogger().debug("Removing branches and references to {}",
 		                 otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
 		otherHeads.forEach(mFinalHeadToCommit::remove);
 		otherHeads.forEach(b -> {
 			try {
 				runOsCommand(mFinalRepoPath.toFile(), mGitCommand, "branch", "-d", b);
-			} catch (GSException e) {
+			} catch (final GSException e) {
 				throw Throwables.propagate(e);
 			}
 		});
@@ -232,15 +285,30 @@ public class Main {
 	}
 
 	private void filterBranch() throws GSException {
-		getLogger().info("Filtering branch \"" + mBranchToCopy + '\'');
+		getLogger().debug("Getting current branches");
+		final File tempWorkingDirectory = mTempRepoPath.toFile();
+		final Set<String> branchesToCreate = new HashSet<>(mBranchesToCopy);
+		linesInString(runOsCommand(tempWorkingDirectory, mGitCommand, "branch", "-v")).map(s -> s.substring(1).trim())
+				.map(getFirstWord())
+				.forEach(branchesToCreate::remove);
+		branchesToCreate.forEach(s -> {
+			try {
+				getLogger().debug("Creating temp branch \"{}\"", s);
+				runOsCommand(tempWorkingDirectory, mGitCommand, "checkout", "-b", s, "origin/" + s);
+			} catch (GSException e) {
+				throw Throwables.propagate(e);
+			}
+		});
+		getLogger().info("Filtering branch(s):{}",
+		                 mBranchesToCopy.stream().map(s -> '"' + s + '"').collect(joining(", ")));
+		final ImmutableList<String> args = Stream.concat(Stream.of(mGitCommand,
+		                                                           "filter-branch",
+		                                                           "--prune-empty",
+		                                                           "--subdirectory-filter",
+		                                                           mNewTopDirectory), mBranchesToCopy.stream())
+				                                   .collect(immutableListCollector());
 		//noinspection ResultOfMethodCallIgnored
-		runOsCommand(mTempRepoPath.toFile(),
-		             mGitCommand,
-		             "filter-branch",
-		             "--prune-empty",
-		             "--subdirectory-filter",
-		             mNewTopDirectory,
-		             mBranchToCopy);
+		runOsCommand(tempWorkingDirectory, args.toArray(new String[args.size()]));
 	}
 
 	private CommitInfo getCommitInfo(@Nonnull final String commit) throws GSException {
@@ -256,7 +324,7 @@ public class Main {
 		int inx = 1;
 		final ImmutableList<String> parents;
 		if (lines.get(inx).startsWith("Merge:")) {
-			parents = Arrays.stream(lines.get(inx).substring("Merge:".length()).trim().split("[ \\t]+"))
+			parents = Arrays.stream(SPACES_PATTERN.split(lines.get(inx).substring("Merge:".length()).trim()))
 					          .collect(immutableListCollector());
 			inx++;
 		} else {
@@ -265,12 +333,12 @@ public class Main {
 		if (!lines.get(inx).startsWith("Author: ")) {
 			throw new GSException("Can't parse result from log -1.\n" + resultOfLog);
 		}
-		String author = lines.get(inx).substring("Author: ".length()).trim();
+		final String author = lines.get(inx).substring("Author: ".length()).trim();
 		inx++;
 		if (!lines.get(inx).startsWith("Date: ")) {
 			throw new GSException("Can't parse result from log -1.\n" + resultOfLog);
 		}
-		String date = lines.get(inx).substring("Date: ".length()).trim();
+		final String date = lines.get(inx).substring("Date: ".length()).trim();
 		inx++;
 		if (!StringUtils.isEmpty(lines.get(inx).trim())) {
 			throw new GSException("Can't parse result from log -1.\n" + resultOfLog);
@@ -282,8 +350,24 @@ public class Main {
 
 	private ImmutableList<String> getCommitListInReverse() throws GSException {
 		final File tempRepo = mTempRepoPath.toFile();
-		final String allCommits = runOsCommand(tempRepo, mGitCommand, "log", "--abbrev-commit", "--pretty=oneline");
-		return linesInString(allCommits).map(getFirstWord()).collect(immutableListCollector()).reverse();
+		final Set<String> relevantCommits = mBranchesToCopy.stream().flatMap(s -> {
+			try {
+				return linesInString(runOsCommand(tempRepo,
+				                                  mGitCommand,
+				                                  "log",
+				                                  "--abbrev-commit",
+				                                  "--pretty=oneline",
+				                                  s)).map(getFirstWord());
+			} catch (GSException e) {
+				throw Throwables.propagate(e);
+			}
+		}).collect(toSet());
+		final String allCommits =
+				runOsCommand(tempRepo, mGitCommand, "log", "--abbrev-commit", "--pretty=oneline", "--all");
+		return linesInString(allCommits).map(getFirstWord())
+				       .filter(relevantCommits::contains)
+				       .collect(immutableListCollector())
+				       .reverse();
 	}
 
 	@Nonnull
@@ -304,25 +388,19 @@ public class Main {
 
 	private Function<String, String> getNWord(final int n) {
 		return s -> {
-			final String[] parts = s.split("[ \\t]+");
+			final String[] parts = SPACES_PATTERN.split(s);
 			return parts[n];
 		};
 	}
 
 	@Nonnull
 	private String getNewHead() {
-		if (mFinalHeadToCommit.size() == 0) {
-			getLogger().info("New head to use is \"" + mBranchToCopy + '"');
-			return mBranchToCopy;
-		}
-		int inx = 1;
-		for (; ; ) {
-			final String newHead = mBranchToCopy + '_' + inx;
+		for (int inx = 1; ; inx++) {
+			final String newHead = "Branch_" + inx;
 			if (!mFinalHeadToCommit.containsKey(newHead)) {
-				getLogger().info("New head to use is \"" + newHead + '"');
+				getLogger().debug("New head to use is \"{}\"", newHead);
 				return newHead;
 			}
-			inx++;
 		}
 	}
 
@@ -337,8 +415,8 @@ public class Main {
 			                                   "-1",
 			                                   commit + '^');
 			return Optional.of(getFirstWord().apply(parent));
-		} catch (GSException e) {
-			getLogger().info("Can't get parent of commit \"" + commit + "\".  Assuming is the first one");
+		} catch (final GSException e) {
+			getLogger().debug("Can't get parent of commit \"{}\".  Assuming is the first one", commit);
 		}
 		return Optional.empty();
 	}
@@ -360,25 +438,23 @@ public class Main {
 		return new BufferedReader(new StringReader(s)).lines();
 	}
 
-	private void prepareFinalBranch(final File finalWorkingDirectory, final String baseCommit) throws GSException {
+	private void prepareFinalBranch(@Nonnull final File finalWorkingDirectory, @Nullable final String baseCommit)
+			throws GSException {
 		mFinalCurrentHead = getNewHead();
-		if (!mFinalCurrentHead.equals(mBranchToCopy)) {
-			//noinspection ResultOfMethodCallIgnored
+		if (baseCommit == null) {
+			runOsCommand(finalWorkingDirectory, mGitCommand, "checkout", "-b", mFinalCurrentHead);
+		} else {
 			runOsCommand(finalWorkingDirectory, mGitCommand, "checkout", "-b", mFinalCurrentHead, baseCommit);
 		}
 	}
 
-	private void prepareFinalBranch(final File finalWorkingDirectory) throws GSException {
-		prepareFinalBranch(finalWorkingDirectory, mFinalInitialCommit);
-	}
-
 	private void removeOrigin() throws GSException {
-		getLogger().info("Getting remotes");
+		getLogger().debug("Getting remotes");
 		final File workingDirectory = mTempRepoPath.toFile();
 		final String remoteResults = runOsCommand(workingDirectory, mGitCommand, "remote", "-v");
 		final Set<String> remotes = linesInString(remoteResults).map(getFirstWord()).collect(toSet());
 		remotes.stream().forEach(s -> {
-			getLogger().info("Removing remote \"" + s + '\"');
+			getLogger().debug("Removing remote \"{}" + '\"', s);
 			try {
 				//noinspection ResultOfMethodCallIgnored
 				runOsCommand(workingDirectory, mGitCommand, "remote", "remove", s);
@@ -405,9 +481,11 @@ public class Main {
 		createFinalRepo();
 		final ImmutableList<String> commitList = getCommitListInReverse();
 		commitList.stream().forEach(this::copyCommit);
+		defineFinalBranches();
 	}
 
-	private String runOsCommand(@Nonnull File workingDirectory, @Nonnull final String... args) throws GSException {
+	private String runOsCommand(@Nonnull final File workingDirectory, @Nonnull final String... args)
+			throws GSException {
 		Objects.requireNonNull(workingDirectory);
 		return runOsCommand(Optional.of(workingDirectory), args);
 	}
@@ -416,7 +494,7 @@ public class Main {
 		return runOsCommand(Optional.empty(), args);
 	}
 
-	private String runOsCommand(@Nonnull Optional<File> workingDirectory, @Nonnull final String... args)
+	private String runOsCommand(@Nonnull final Optional<File> workingDirectory, @Nonnull final String... args)
 			throws GSException {
 		try {
 			final ProcessBuilder processBuilder = new ProcessBuilder(args);
@@ -434,7 +512,7 @@ public class Main {
 				                      error + "\nstdout:" + new String(result));
 			}
 			if (!StringUtils.isEmpty(error)) {
-				getLogger().info("STDERR: \"" + error + '"');
+				getLogger().debug("STDERR: \"{}\"", error);
 			}
 			return new String(result);
 		} catch (IOException | InterruptedException e) {
@@ -462,7 +540,7 @@ public class Main {
 				throw new GSInvalidArgumentException("Final repo \"" + mFinalRepo + "\"should not exist");
 			}
 			mFinalRepoPath = Files.createDirectories(finalRepo);
-		} catch (IOException e) {
+		} catch (final IOException e) {
 			throw new GSInvalidArgumentException("Can't create folder", e);
 		}
 	}

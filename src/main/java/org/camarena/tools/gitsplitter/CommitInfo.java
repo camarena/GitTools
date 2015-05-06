@@ -45,6 +45,7 @@ public class CommitInfo {
 	public boolean isRoot() {
 		return mParents.size() == 0;
 	}
+
 	@Nonnull
 	private final String mAuthor;
 	@Nonnull
