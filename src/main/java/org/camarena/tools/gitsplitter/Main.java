@@ -17,10 +17,15 @@ import javax.annotation.Nullable;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.StringReader;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -88,11 +93,16 @@ public class Main {
 			          variableArity = true)
 	private List<String> mBranchesToCopy = null;
 
+	@Parameter(names = "--mapFile", required = true, description = "Path to the file to store the mappings from " +
+	                                                               "original commit to new one")
+	private String mMappingFile = null;
+
 	private Path mTempRepoPath = null;
 	private Path mFinalRepoPath = null;
 	private String mFinalCurrentHead = null;
 	private String mTempLastCommitProcessed = null;
 	private String mFinalInitialCommit = null;
+	private PrintWriter mMappingFileWriter;
 
 	@SuppressWarnings("ResultOfMethodCallIgnored")
 	private void cloneToTempRepo() throws GSException {
@@ -129,7 +139,7 @@ public class Main {
 				}
 				copyFilesAndCommit(commit, commitInfo, s -> true);
 			}
-			final String currentFinalCommit = getCurrentFinalCommit();
+			final String currentFinalCommit = getFinalCurrentCommit();
 			getLogger().debug("Adding mapping from \"{}\" to commit \"{}\"", mFinalCurrentHead, currentFinalCommit);
 			mFinalHeadToCommit.put(mFinalCurrentHead, currentFinalCommit);
 			mTempLastCommitProcessed = commit;
@@ -137,6 +147,7 @@ public class Main {
 			if (mFinalInitialCommit == null) {
 				mFinalInitialCommit = currentFinalCommit;
 			}
+			mMappingFileWriter.println(commit + '\t' + currentFinalCommit);
 		} catch (final GSException e) {
 			getLogger().error("Failed processing commit \"{}\"", commit);
 			throw Throwables.propagate(e);
@@ -260,8 +271,8 @@ public class Main {
 						.collect(immutableListCollector());
 		try {
 			getLogger().debug("Issuing the merge command to \"{}\" from {}",
-			                 survivorHead,
-			                 otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
+			                  survivorHead,
+			                  otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
 			runOsCommand(mFinalRepoPath.toFile(), args.toArray(new String[args.size()]));
 		} catch (final GSException e) {
 			if (e.getMessage().contains("Merge conflict")) {
@@ -272,7 +283,7 @@ public class Main {
 			}
 		}
 		getLogger().debug("Removing branches and references to {}",
-		                 otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
+		                  otherHeads.stream().map(s -> '"' + s + '"').collect(joining(", ")));
 		otherHeads.forEach(mFinalHeadToCommit::remove);
 		otherHeads.forEach(b -> {
 			try {
@@ -370,16 +381,16 @@ public class Main {
 				       .reverse();
 	}
 
-	@Nonnull
-	private String getCurrentFinalCommit() throws GSException {
-		final String commit = runOsCommand(mFinalRepoPath.toFile(),
-		                                   mGitCommand,
-		                                   "log",
-		                                   "--abbrev-commit",
-		                                   "--pretty=oneline",
-		                                   "-1",
-		                                   "HEAD");
+	private String getCurrentCommit(final File gitDirectory) throws GSException {
+		final String commit =
+				runOsCommand(gitDirectory, mGitCommand, "log", "--abbrev-commit", "--pretty=oneline", "-1", "HEAD");
 		return getFirstWord().apply(commit);
+	}
+
+	@Nonnull
+	private String getFinalCurrentCommit() throws GSException {
+		final File gitDirectory = mFinalRepoPath.toFile();
+		return getCurrentCommit(gitDirectory);
 	}
 
 	private Function<String, String> getFirstWord() {
@@ -475,13 +486,36 @@ public class Main {
 			throw new GSInvalidArgumentException("Can't recognize configuration. ", e);
 		}
 		validateParameters();
-		cloneToTempRepo();
-		filterBranch();
-		removeOrigin();
-		createFinalRepo();
-		final ImmutableList<String> commitList = getCommitListInReverse();
-		commitList.stream().forEach(this::copyCommit);
-		defineFinalBranches();
+		try {
+			cloneToTempRepo();
+			filterBranch();
+			removeOrigin();
+			createFinalRepo();
+			final ImmutableList<String> commitList = getCommitListInReverse();
+			commitList.stream().forEach(this::copyCommit);
+			defineFinalBranches();
+			mMappingFileWriter.close();
+		} finally {
+			try {
+				Files.walkFileTree(mTempRepoPath, new SimpleFileVisitor<Path>() {
+					@Override
+					public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+						Files.delete(file);
+						return FileVisitResult.CONTINUE;
+					}
+
+					@Override
+					public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+						Files.delete(dir);
+						return FileVisitResult.CONTINUE;
+					}
+
+				});
+			} catch (IOException e) {
+				//noinspection ThrowFromFinallyBlock
+				throw new GSException(e);
+			}
+		}
 	}
 
 	private String runOsCommand(@Nonnull final File workingDirectory, @Nonnull final String... args)
@@ -540,6 +574,11 @@ public class Main {
 				throw new GSInvalidArgumentException("Final repo \"" + mFinalRepo + "\"should not exist");
 			}
 			mFinalRepoPath = Files.createDirectories(finalRepo);
+			final Path mappingFile = Paths.get(mMappingFile);
+			if (Files.exists(mappingFile)) {
+				throw new GSInvalidArgumentException("Mapping file \"" + mMappingFile + "\" should not exist");
+			}
+			mMappingFileWriter = new PrintWriter(Files.newBufferedWriter(mappingFile, StandardOpenOption.CREATE_NEW));
 		} catch (final IOException e) {
 			throw new GSInvalidArgumentException("Can't create folder", e);
 		}
