@@ -4,7 +4,7 @@
 
 	<groupId>org.camarena.tools</groupId>
 	<artifactId>GitSplitter</artifactId>
-	<version>1.1-SNAPSHOT</version>
+	<version>1.1</version>
 
 	<description>Create a new repository from a subdirectory of an existing one keeping the history for that
 		subdirectory
@@ -27,7 +27,7 @@
 		<url>git@github.com:/camarena/GitSplitter</url>
 		<connection>scm:git:https://github.com/camarena/GitSplitter</connection>
 		<developerConnection>scm:git:ssh://git@github.com/camarena/GitSplitter</developerConnection>
-		<tag>HEAD</tag>
+		<tag>GitSplitter-1.1</tag>
 	</scm>
 
 	<licenses>
