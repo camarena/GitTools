@@ -1,4 +1,4 @@
-package org.camarena.tools.gitsplitter;
+package org.camarena.tools.oscommands.git;
 
 import com.google.common.collect.ImmutableList;
 
@@ -15,6 +15,7 @@ public class CommitInfo {
 		mAuthor = author;
 		mDate = date;
 		mComment = comment;
+		//noinspection AssignmentToCollectionOrArrayFieldFromParameter
 		mParents = parents;
 	}
 
@@ -35,6 +36,7 @@ public class CommitInfo {
 
 	@Nonnull
 	public ImmutableList<String> getParents() {
+		//noinspection ReturnOfCollectionOrArrayField
 		return mParents;
 	}
 
@@ -43,7 +45,7 @@ public class CommitInfo {
 	}
 
 	public boolean isRoot() {
-		return mParents.size() == 0;
+		return mParents.isEmpty();
 	}
 
 	@Nonnull

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+		 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>org.camarena.tools.git</groupId>
+		<artifactId>parent</artifactId>
+		<version>1.2-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>GitTrimmer</artifactId>
+	<packaging>jar</packaging>
+
+	<description>Tool that creates a new repository by removing a set of obsolete subdirectories of an existing one
+		keeping the history for those subdirectories
+	</description>
+	<name>Git Repository Trimmer</name>
+	<inceptionYear>2015</inceptionYear>
+	<organization>
+		<name>Hermán de J. Camarena R.</name>
+	</organization>
+	<prerequisites>
+		<maven>3.3.3</maven>
+	</prerequisites>
+	<developers>
+		<developer>
+			<name>Hermán de J. Camarena R.</name>
+			<id>camarena</id>
+		</developer>
+	</developers>
+
+	<licenses>
+		<license>
+			<name>The Apache Software License, Version 2.0</name>
+			<url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+	<properties>
+		<!-- Main Class -->
+		<MAIN_CLASS>org.camarena.tools.gittrimmer.Main</MAIN_CLASS>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.camarena.tools.git</groupId>
+			<artifactId>GitCommon</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.google.code.findbugs</groupId>
+			<artifactId>annotations</artifactId>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>
