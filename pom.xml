@@ -58,7 +58,6 @@
 	<modules>
 		<module>GitCommon</module>
 		<module>GitSplitter</module>
-		<module>GitTrimmer</module>
 	</modules>
 	<dependencyManagement>
 		<dependencies>

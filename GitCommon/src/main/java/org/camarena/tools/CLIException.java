@@ -25,4 +25,15 @@ public class CLIException extends Exception {
 	                       final boolean writableStackTrace) {
 		super(message, cause, enableSuppression, writableStackTrace);
 	}
+
+	public static
+	RuntimeException rtWrap(final String message) {
+		return new RuntimeException(new CLIException(message));
+	}
+
+	public static
+	RuntimeException rtWrap(final String message, final Throwable cause) {
+		return new RuntimeException(new CLIException(message, cause));
+	}
+
 }

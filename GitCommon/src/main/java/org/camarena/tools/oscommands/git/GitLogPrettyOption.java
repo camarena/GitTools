@@ -26,7 +26,7 @@ class GitLogPrettyOption extends StringOSCommandOption implements GitLogOption {
 	GitLogPrettyOption(@Nullable final String value) throws CLIInvalidArgumentException {
 		super("--pretty", Optional.ofNullable(value));
 		if (value != null) {
-			if (!value.startsWith("format:") && !mgValues.contains(value))
+			if (!mgValues.contains(value))
 				throw new CLIInvalidArgumentException("Invalid value \"" + value + "\" for --pretty");
 		}
 	}

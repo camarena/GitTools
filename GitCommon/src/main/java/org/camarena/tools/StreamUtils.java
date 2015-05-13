@@ -21,10 +21,10 @@ public final class StreamUtils {
 		return new BufferedReader(new StringReader(s)).lines();
 	}
 
-	public static Collector<String, Builder<String>, ImmutableList<String>> immutableListCollector() {
+	public static <T>
+	Collector<T, Builder<T>, ImmutableList<T>> immutableListCollector() {
 		return Collector.of(Builder::new,
-		                    (BiConsumer<Builder<String>, String>) Builder::add,
-
+		                    (BiConsumer<Builder<T>, T>) Builder::add,
 		                    (s1, s2) -> s1.addAll(s2.build()),
 		                    Builder::build);
 	}

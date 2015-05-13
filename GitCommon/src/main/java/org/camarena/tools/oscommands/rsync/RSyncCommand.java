@@ -4,7 +4,9 @@ import com.beust.jcommander.Parameter;
 import org.camarena.tools.CLIException;
 import org.camarena.tools.CLIInvalidArgumentException;
 import org.camarena.tools.Configuration;
-import org.camarena.tools.oscommands.*;
+import org.camarena.tools.oscommands.OSCommand;
+import org.camarena.tools.oscommands.OSCommandOption;
+import org.camarena.tools.oscommands.ProcessResult;
 
 import javax.annotation.Nonnull;
 import java.util.Arrays;
@@ -18,10 +20,10 @@ import java.util.stream.Stream;
 public
 class RSyncCommand extends OSCommand implements Configuration {
 
-	private static final RSyncCommand      mgOurInstance  = new RSyncCommand();
+	private static final RSyncCommand mgOurInstance  = new RSyncCommand();
 	@SuppressWarnings("unused")
 	@Parameter(names = "--rsync", description = "Path to the rsync command", required = false)
-	private              String            mRSyncCommandX = "/usr/bin/rsync";
+	private              String       mRSyncCommandX = "/usr/bin/rsync";
 
 	private
 	RSyncCommand() {
@@ -43,7 +45,7 @@ class RSyncCommand extends OSCommand implements Configuration {
 	CompletableFuture<ProcessResult> sync(@Nonnull final String source,
 	                                      @Nonnull final String destination,
 	                                      final RSyncOption... options) throws
-	                                                                           CLIException {
+	                                                                    CLIException {
 		return runOsCommand(Stream.concat(Arrays.stream(options).map(OSCommandOption.class::cast).flatMap(
 				                                  OSCommandOption::asStream),
 		                                  Stream.of(source, destination)));

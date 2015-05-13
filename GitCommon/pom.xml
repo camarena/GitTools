@@ -14,7 +14,7 @@
 	<packaging>jar</packaging>
 
 	<description>Common git related utilities</description>
-	<name>Git Repository Splitter</name>
+	<name>Git Common Code</name>
 	<inceptionYear>2015</inceptionYear>
 	<organization>
 		<name>Hermán de J. Camarena R.</name>

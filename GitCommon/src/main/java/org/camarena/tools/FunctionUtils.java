@@ -6,7 +6,7 @@ import java.util.regex.Pattern;
 /**
  * @author Hermán de J. Camarena R.
  */
-public
+public final
 class FunctionUtils {
 	public static final Pattern SPACES_PATTERN = Pattern.compile("\\p{Space}+");
 

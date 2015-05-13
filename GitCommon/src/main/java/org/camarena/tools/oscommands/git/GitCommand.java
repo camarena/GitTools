@@ -210,10 +210,8 @@ class GitCommand extends OSCommand implements Configuration {
 	}
 
 	public
-	CompletableFuture<ProcessResult> add(@Nonnull final Path pathToRepo, @Nonnull final String file) throws
+	CompletableFuture<ProcessResult> add(@Nonnull final Path pathToRepo, @Nonnull final GitAddOption... options) throws
 	                                                                                                 CLIException {
-		Objects.requireNonNull(pathToRepo);
-		Objects.requireNonNull(file);
-		return runOsCommand(Optional.of(pathToRepo.toFile()), Stream.of("add", file));
+		return common("add", pathToRepo, options);
 	}
 }
