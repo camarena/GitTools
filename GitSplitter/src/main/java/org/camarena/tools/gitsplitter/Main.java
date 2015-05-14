@@ -5,6 +5,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.camarena.tools.CLIException;
@@ -55,6 +56,7 @@ import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 import static org.camarena.tools.FunctionUtils.getFirstWord;
 import static org.camarena.tools.StreamUtils.immutableListCollector;
+import static org.camarena.tools.StreamUtils.immutableSetCollector;
 import static org.camarena.tools.StreamUtils.linesInString;
 import static org.camarena.tools.oscommands.git.GitAddAllFullTreeOption.allFullTree;
 import static org.camarena.tools.oscommands.git.GitArgument.arguments;
@@ -100,8 +102,12 @@ class Main extends CLITool implements Configuration {
 	@Parameter(names = "--tempRepo", description = "Path to the temporary repo.  If specified must not exist")
 	private String mTemporaryRepo = null;
 
-	@Parameter(names = "--finalRepo", description = "Path to the final repo.  Must not exist")
+	@Parameter(names = "--finalRepo", description = "Path to the final repo.")
 	private String mFinalRepo = null;
+
+	@Parameter(names = "--useExistingRepo",
+	           description = "Use this option if the destination repo already exists.  Avoid creating it")
+	private boolean mUseExistingRepo = false;
 
 	@Parameter(names = "--topFolder", description = "Folder that will become new top of the new "
 	                                                + "repo")
@@ -254,17 +260,19 @@ class Main extends CLITool implements Configuration {
 			}
 		}).collect(toSet());
 		try (final PrintWriter writer = new PrintWriter(Files.newBufferedWriter(Paths.get("/tmp/relevantCommits.txt"),
-		                                                             StandardOpenOption.TRUNCATE_EXISTING))){
+		                                                                        StandardOpenOption.TRUNCATE_EXISTING)
+		)) {
 			relevantCommits.forEach(writer::println);
 		} catch (final IOException e) {
-			getLogger().error("Can't output commits",e);
+			getLogger().error("Can't output commits", e);
 			throw new CLIException(e);
 		}
 
 		final String allCommits = reviewResult(gitCommand().log(getTempRepoPath(), format("%h"),
 		                                                        all));
 		try (final PrintWriter writer = new PrintWriter(Files.newBufferedWriter(Paths.get("/tmp/allCommits.txt"),
-		                                                                        StandardOpenOption.TRUNCATE_EXISTING))) {
+		                                                                        StandardOpenOption.TRUNCATE_EXISTING)
+		)) {
 			linesInString(allCommits).map(getFirstWord())
 			                         .filter(relevantCommits::contains)
 			                         .collect(immutableListCollector())
@@ -324,10 +332,14 @@ class Main extends CLITool implements Configuration {
 			throw new CLIInvalidArgumentException("Final repo argument can't be empty");
 		}
 		final Path finalRepoPath = Paths.get(mFinalRepo);
-		if (Files.exists(finalRepoPath)) {
-			throw new CLIInvalidArgumentException("Final repo \"" + mFinalRepo + "\"should not exist");
+		if (mUseExistingRepo) {
+			if (!Files.exists(finalRepoPath))
+				throw new CLIInvalidArgumentException("Final repo \"" + mFinalRepo + "\" not found");
 		}
-		mFinalRepoPath = Files.createDirectories(finalRepoPath);
+		else if (Files.exists(finalRepoPath))
+			throw new CLIInvalidArgumentException("Final repo \"" + mFinalRepo + "\" should not exist");
+		else
+			mFinalRepoPath = Files.createDirectories(finalRepoPath);
 		final Path mappingFilePath = Paths.get(mMappingFile);
 		if (Files.exists(mappingFilePath)) {
 			throw new CLIInvalidArgumentException("Mapping file \"" + mMappingFile + "\" should not exist");
@@ -443,7 +455,10 @@ class Main extends CLITool implements Configuration {
 				if (mNewTopDirectory != null)
 					filterBranch(mBranchesToCopy, mNewTopDirectory);
 				removeOrigin();
-				createFinalRepo(getFinalRepoPath(), mBranchesToCopy);
+				if (mUseExistingRepo)
+					createMissingBranchesInFinalRepo(getFinalRepoPath(), mBranchesToCopy);
+				else
+					createFinalRepo(getFinalRepoPath(), mBranchesToCopy);
 			}
 			else
 				populateExistingFinalBranches();
@@ -460,6 +475,25 @@ class Main extends CLITool implements Configuration {
 			if (writer != null)
 				writer.close();
 		}
+	}
+
+	private
+	void createMissingBranchesInFinalRepo(@Nonnull final Path repoPath, @Nonnull final List<String> branches) throws
+	                                                                                                          CLIException {
+		Objects.requireNonNull(repoPath);
+		Objects.requireNonNull(branches);
+		final ImmutableSet<String> existingBranches = linesInString(reviewResult(gitCommand().branch(repoPath))).map(s -> s
+				.substring(
+						1).trim()).collect(immutableSetCollector());
+		branches.stream()
+		        .filter(s -> !existingBranches.contains(s)).forEach(b -> {
+			getLogger().debug("Creating initial branch \"{}\"", b);
+			try {
+				reviewResult(gitCommand().checkout(repoPath, createBranch, arguments(b)));
+			} catch (CLIException e) {
+				throw Throwables.propagate(e);
+			}
+		});
 	}
 
 	private
@@ -564,7 +598,8 @@ class Main extends CLITool implements Configuration {
 				if (commitInfo.isRoot()) {
 					prepareFinalBranch(getFinalRepoPath(), mFinalInitialCommit);
 				}
-				else if (mTempLastCommitProcessed == null || !mTempLastCommitProcessed.equals(commitInfo.getParents().get(0))) {
+				else if (mTempLastCommitProcessed == null || !mTempLastCommitProcessed.equals(commitInfo.getParents()
+				                                                                                        .get(0))) {
 					prepareFinalBranch(getFinalRepoPath(),
 					                   mMapFromTempToFinalCommit.get(commitInfo.getParents().get(0)));
 					try {
