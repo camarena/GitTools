@@ -54,19 +54,24 @@ class CLITool {
 			displayHelp(mCommander);
 			throw new CLIInvalidArgumentException("Can't recognize configuration. ", e);
 		}
-		Arrays.stream(configurations).forEach((configuration) -> {
-			try {
-				configuration.validate();
-			} catch (final CLIInvalidArgumentException e) {
-				throw Throwables.propagate(e);
-			}
-		});
+		if (shouldRun())
+			Arrays.stream(configurations).forEach((configuration) -> {
+				try {
+					configuration.validate();
+				} catch (final CLIException e) {
+					throw Throwables.propagate(e);
+				}
+			});
 		try {
-			execute();
+			if (shouldRun())
+				execute();
 		} finally {
 			cleanUp();
 		}
 	}
+
+	protected abstract
+	boolean shouldRun();
 
 	protected
 	void displayHelp(@Nonnull final StringBuilder out) {

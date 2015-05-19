@@ -129,6 +129,9 @@ class Main extends CLITool implements Configuration {
 	@Parameter(names = "--recoverFile", description = "File to get info to use if a failure occurred")
 	private File mRecoveryFile = null;
 
+	@Parameter(names = {"-h", "--help"}, description = "Displays help information", help = true)
+	private boolean mHelpOnly = false;
+
 	private String        mFinalCurrentHead        = null;
 	private String        mTempLastCommitProcessed = null;
 	private String        mFinalInitialCommit      = null;
@@ -291,7 +294,7 @@ class Main extends CLITool implements Configuration {
 
 	@Override
 	public
-	void validate() throws CLIInvalidArgumentException {
+	void validate() throws CLIException {
 		try {
 			if (mRecoveryFile != null)
 				validateRecoveryOptions();
@@ -311,7 +314,7 @@ class Main extends CLITool implements Configuration {
 	}
 
 	private
-	void validateNonRecoveryOptions() throws CLIInvalidArgumentException, IOException {
+	void validateNonRecoveryOptions() throws CLIException, IOException {
 		if (mOriginalRepo == null)
 			reportConfigurationError("'--source' is required");
 		if (mFinalRepo == null)
@@ -348,6 +351,12 @@ class Main extends CLITool implements Configuration {
 			if (!Files.exists(finalRepoPath))
 				reportConfigurationError("Final repo \"" + mFinalRepo + "\" not found");
 			mFinalRepoPath = finalRepoPath;
+			final ImmutableSet<String> existingBranches = linesInString(reviewResult(gitCommand().branch
+					(mFinalRepoPath))).map(s -> s.substring(1).trim()).collect(immutableSetCollector());
+			mBranchesToCopy.stream().filter(existingBranches::contains).forEach(b -> CLIInvalidArgumentException
+					.rtWrap(
+							"Branch to copy \"" + b + "\" already exists in existing repository"));
+
 		}
 		else if (Files.exists(finalRepoPath))
 			reportConfigurationError("Final repo \"" + mFinalRepo + "\" should not exist");
@@ -595,6 +604,12 @@ class Main extends CLITool implements Configuration {
 		return LOGGER;
 	}
 
+	@Override
+	protected
+	boolean shouldRun() {
+		return !mHelpOnly;
+	}
+
 	private
 	void copyCommit(@Nonnull final String commit) {
 		try {
@@ -675,10 +690,6 @@ class Main extends CLITool implements Configuration {
 
 	private
 	void defineFinalBranches() throws CLIException {
-		final ImmutableSet<String> existingBranches = linesInString(reviewResult(gitCommand().branch(getTempRepoPath
-				                                                                                             ())))
-				.map(
-						s -> s.substring(1).trim()).collect(immutableSetCollector());
 		mBranchesToCopy.forEach(b -> {
 			try {
 				final String originalCommit = getFirstWord().apply(reviewResult(gitCommand().log(getTempRepoPath(),
@@ -692,16 +703,11 @@ class Main extends CLITool implements Configuration {
 				}
 				getLogger().debug("Setting final branch \"{}\" to commit \"{}\"", b, newCommit);
 				final String existingHead = mFinalCommitToHead.get(newCommit);
-				if (existingBranches.contains(b)) {
-					reviewResult(gitCommand().checkout(getFinalRepoPath(), arguments(b)));
-					reviewResult(gitCommand().merge(getFinalRepoPath(), arguments(newCommit)));
-				}
-				else
-					reviewResult(gitCommand().checkout(getFinalRepoPath(), createBranch, arguments(b,
-					                                                                               existingHead
-					                                                                               == null ?
-					                                                                               newCommit :
-					                                                                               existingHead)));
+				reviewResult(gitCommand().checkout(getFinalRepoPath(), createBranch, arguments(b,
+				                                                                               existingHead
+				                                                                               == null ?
+				                                                                               newCommit :
+				                                                                               existingHead)));
 			} catch (CLIException e) {
 				throw Throwables.propagate(e);
 			}
