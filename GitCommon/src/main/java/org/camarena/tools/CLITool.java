@@ -13,36 +13,45 @@ import java.util.Objects;
 /**
  * @author Hermán de J. Camarena R.
  */
-public abstract class CLITool {
+public abstract
+class CLITool {
 
-	protected abstract void cleanUp() throws CLIException;
+	private static final Logger LOGGER = LoggerFactory.getLogger(CLITool.class);
+	private JCommander mCommander;
 
-	protected void displayHelp(@Nonnull final JCommander commander) {
+	protected abstract
+	void cleanUp() throws CLIException;
+
+	protected
+	void displayHelp(@Nonnull final JCommander commander) {
 		Objects.requireNonNull(commander);
 		final StringBuilder out = new StringBuilder(256);
 		commander.usage(out);
 		getLogger().info(out.toString());
 	}
 
-	protected abstract void execute() throws CLIException;
+	protected abstract
+	void execute() throws CLIException;
 
 	/**
 	 * {@link Logger} for this class.
 	 *
 	 * @return {@link Logger} for this class
 	 */
-	protected Logger getLogger() {
+	protected
+	Logger getLogger() {
 		return LOGGER;
 	}
 
-	protected void run(final String[] args, final Configuration... configurations) throws CLIException {
-		final JCommander commander = new JCommander();
-		Arrays.stream(configurations).forEach(commander::addObject);
+	protected
+	void run(final String[] args, final Configuration... configurations) throws CLIException {
+		mCommander = new JCommander();
+		Arrays.stream(configurations).forEach(mCommander::addObject);
 		try {
-			commander.parse(args);
+			mCommander.parse(args);
 		} catch (final ParameterException e) {
 			getLogger().error("Invalid configuration", e);
-			displayHelp(commander);
+			displayHelp(mCommander);
 			throw new CLIInvalidArgumentException("Can't recognize configuration. ", e);
 		}
 		Arrays.stream(configurations).forEach((configuration) -> {
@@ -59,6 +68,9 @@ public abstract class CLITool {
 		}
 	}
 
-	private static final Logger LOGGER = LoggerFactory.getLogger(CLITool.class);
+	protected
+	void displayHelp(@Nonnull final StringBuilder out) {
+		mCommander.usage(out);
+	}
 
 }

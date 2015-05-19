@@ -260,7 +260,8 @@ class Main extends CLITool implements Configuration {
 			}
 		}).collect(toSet());
 		try (final PrintWriter writer = new PrintWriter(Files.newBufferedWriter(Paths.get("/tmp/relevantCommits.txt"),
-		                                                                        StandardOpenOption.TRUNCATE_EXISTING)
+		                                                                        StandardOpenOption.TRUNCATE_EXISTING,
+		                                                                        StandardOpenOption.CREATE)
 		)) {
 			relevantCommits.forEach(writer::println);
 		} catch (final IOException e) {
@@ -271,7 +272,8 @@ class Main extends CLITool implements Configuration {
 		final String allCommits = reviewResult(gitCommand().log(getTempRepoPath(), format("%h"),
 		                                                        all));
 		try (final PrintWriter writer = new PrintWriter(Files.newBufferedWriter(Paths.get("/tmp/allCommits.txt"),
-		                                                                        StandardOpenOption.TRUNCATE_EXISTING)
+		                                                                        StandardOpenOption.TRUNCATE_EXISTING,
+		                                                                        StandardOpenOption.CREATE)
 		)) {
 			linesInString(allCommits).map(getFirstWord())
 			                         .filter(relevantCommits::contains)
@@ -301,21 +303,31 @@ class Main extends CLITool implements Configuration {
 	}
 
 	private
+	void reportConfigurationError(@Nonnull final String msg) throws CLIInvalidArgumentException {
+		final StringBuilder sb = new StringBuilder(256);
+		displayHelp(sb);
+		getLogger().info(sb.toString());
+		throw new CLIInvalidArgumentException(msg);
+	}
+
+	private
 	void validateNonRecoveryOptions() throws CLIInvalidArgumentException, IOException {
 		if (mOriginalRepo == null)
-			throw new CLIInvalidArgumentException("'--source' is required");
+			reportConfigurationError("'--source' is required");
 		if (mFinalRepo == null)
-			throw new CLIInvalidArgumentException("'--finalRepo' is required");
-		if (mNewTopDirectory == null && (mDirectoriesToExclude == null || mDirectoriesToExclude.isEmpty()))
-			throw new CLIInvalidArgumentException("One of '--topFolder' or '--exclude' is required");
+			reportConfigurationError("'--finalRepo' is required");
+		if (mNewTopDirectory == null
+		    && (mDirectoriesToExclude == null || mDirectoriesToExclude.isEmpty())
+		    && !mUseExistingRepo)
+			reportConfigurationError("One of '--topFolder', '--useExistingRepo' or '--exclude' is required");
 		if (mNewTopDirectory != null && mDirectoriesToExclude != null && mDirectoriesToExclude.size() > 0) {
-			throw new CLIInvalidArgumentException(
+			reportConfigurationError(
 					"Only one of \'--topFolder\' and \'--exclude\' option is supported");
 		}
 		if (mBranchesToCopy == null || mBranchesToCopy.isEmpty())
-			throw new CLIInvalidArgumentException("'--branches' is required");
+			reportConfigurationError("'--branches' is required");
 		if (mMappingFile == null)
-			throw new CLIInvalidArgumentException("'--mapFile' is required");
+			reportConfigurationError("'--mapFile' is required");
 		final Path tempRepo;
 		if (mTemporaryRepo == null) {
 			tempRepo = Files.createTempDirectory("GitSplitterTempRepo");
@@ -323,26 +335,27 @@ class Main extends CLITool implements Configuration {
 		else {
 			tempRepo = Paths.get(mTemporaryRepo);
 			if (Files.exists(tempRepo)) {
-				throw new CLIInvalidArgumentException("Temporary path \"" + mTemporaryRepo + "\" should not " +
-				                                      "exist");
+				reportConfigurationError("Temporary path \"" + mTemporaryRepo + "\" should not " +
+				                         "exist");
 			}
 		}
 		mTempRepoPath = Files.createDirectories(tempRepo).normalize();
 		if (StringUtils.isEmpty(mFinalRepo)) {
-			throw new CLIInvalidArgumentException("Final repo argument can't be empty");
+			reportConfigurationError("Final repo argument can't be empty");
 		}
 		final Path finalRepoPath = Paths.get(mFinalRepo);
 		if (mUseExistingRepo) {
 			if (!Files.exists(finalRepoPath))
-				throw new CLIInvalidArgumentException("Final repo \"" + mFinalRepo + "\" not found");
+				reportConfigurationError("Final repo \"" + mFinalRepo + "\" not found");
+			mFinalRepoPath = finalRepoPath;
 		}
 		else if (Files.exists(finalRepoPath))
-			throw new CLIInvalidArgumentException("Final repo \"" + mFinalRepo + "\" should not exist");
+			reportConfigurationError("Final repo \"" + mFinalRepo + "\" should not exist");
 		else
 			mFinalRepoPath = Files.createDirectories(finalRepoPath);
 		final Path mappingFilePath = Paths.get(mMappingFile);
 		if (Files.exists(mappingFilePath)) {
-			throw new CLIInvalidArgumentException("Mapping file \"" + mMappingFile + "\" should not exist");
+			reportConfigurationError("Mapping file \"" + mMappingFile + "\" should not exist");
 		}
 		mMappingFileWriter = new PrintWriter(Files.newBufferedWriter(mappingFilePath,
 		                                                             StandardOpenOption.CREATE_NEW));
@@ -351,23 +364,23 @@ class Main extends CLITool implements Configuration {
 	private
 	void validateRecoveryOptions() throws CLIInvalidArgumentException, IOException {
 		if (mOriginalRepo != null)
-			throw new CLIInvalidArgumentException("Only one of '--source' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--source' and '--recoverFile' can be "
+			                         + "specified");
 		if (mTemporaryRepo != null)
-			throw new CLIInvalidArgumentException("Only one of '--tempRepo' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--tempRepo' and '--recoverFile' can be "
+			                         + "specified");
 		if (mFinalRepo != null)
-			throw new CLIInvalidArgumentException("Only one of '--finalRepo' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--finalRepo' and '--recoverFile' can be "
+			                         + "specified");
 		if (mNewTopDirectory != null)
-			throw new CLIInvalidArgumentException("Only one of '--topFolder' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--topFolder' and '--recoverFile' can be "
+			                         + "specified");
 		if (mBranchesToCopy != null && mBranchesToCopy.size() > 0)
-			throw new CLIInvalidArgumentException("Only one of '--branches' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--branches' and '--recoverFile' can be "
+			                         + "specified");
 		if (mMappingFile != null)
-			throw new CLIInvalidArgumentException("Only one of '--mapFile' and '--recoverFile' can be "
-			                                      + "specified");
+			reportConfigurationError("Only one of '--mapFile' and '--recoverFile' can be "
+			                         + "specified");
 		readRecoveryFile();
 	}
 
@@ -662,6 +675,10 @@ class Main extends CLITool implements Configuration {
 
 	private
 	void defineFinalBranches() throws CLIException {
+		final ImmutableSet<String> existingBranches = linesInString(reviewResult(gitCommand().branch(getTempRepoPath
+				                                                                                             ())))
+				.map(
+						s -> s.substring(1).trim()).collect(immutableSetCollector());
 		mBranchesToCopy.forEach(b -> {
 			try {
 				final String originalCommit = getFirstWord().apply(reviewResult(gitCommand().log(getTempRepoPath(),
@@ -675,10 +692,16 @@ class Main extends CLITool implements Configuration {
 				}
 				getLogger().debug("Setting final branch \"{}\" to commit \"{}\"", b, newCommit);
 				final String existingHead = mFinalCommitToHead.get(newCommit);
-				reviewResult(gitCommand().checkout(getFinalRepoPath(), createBranch, arguments(b,
-				                                                                               existingHead == null ?
-				                                                                               newCommit :
-				                                                                               existingHead)));
+				if (existingBranches.contains(b)) {
+					reviewResult(gitCommand().checkout(getFinalRepoPath(), arguments(b)));
+					reviewResult(gitCommand().merge(getFinalRepoPath(), arguments(newCommit)));
+				}
+				else
+					reviewResult(gitCommand().checkout(getFinalRepoPath(), createBranch, arguments(b,
+					                                                                               existingHead
+					                                                                               == null ?
+					                                                                               newCommit :
+					                                                                               existingHead)));
 			} catch (CLIException e) {
 				throw Throwables.propagate(e);
 			}
