@@ -9,6 +9,7 @@
 	</parent>
 
 	<artifactId>GitCommon</artifactId>
+
 	<packaging>jar</packaging>
 
 	<description>Common git related utilities</description>
